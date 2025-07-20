@@ -1,0 +1,1957 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bank Goal Tracker (Local Storage)</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Inter Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">\
+    <!-- React and ReactDOM CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel for JSX transformation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Ensure the root div takes full height */
+        #root {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column; /* Allow header and content to stack */
+            align-items: center;
+            justify-content: flex-start; /* Align content to the top */
+        }
+    </style>
+</head>
+<body>
+    <div id="root">
+        {/* The React app will render here */}
+    </div>
+
+    <script type="text/babel">
+        // Import React hooks
+        const { useState, useEffect, useRef } = React;
+
+        // Function to determine the base APY from the provided tiers (screenshot data)
+        // This function is now only used as a fallback if no R and N are provided,
+        // or if the user explicitly leaves Daily Earnings blank.
+        const getBaseApyFromTier = (amount) => {
+            if (amount >= 20480000) return 5610;
+            if (amount >= 10240000) return 2805;
+            if (amount >= 5120000) return 1402;
+            if (amount >= 2560000) return 701;
+            if (amount >= 1280000) return 350;
+            if (amount >= 640000) return 175;
+            if (amount >= 320000) return 87;
+            if (amount >= 160000) return 43;
+            if (amount >= 80000) return 21;
+            if (amount >= 40000) return 10;
+            if (amount >= 20000) return 5;
+            if (amount >= 10000) return 2;
+            if (amount >= 5000) return 1;
+            return 0; // Default for amounts less than 5000
+        };
+
+        // Function to get the calculated daily earnings based on amount, annual interest rate, and compounding frequency.
+        // This is the primary daily earnings calculation.
+        const getCalculatedDailyEarningsFromAmount = (amount, annualInterestRateInput, compoundingFrequencyInput) => {
+            const parsedR = parseFloat(annualInterestRateInput);
+            const parsedN = parseInt(compoundingFrequencyInput);
+
+            if (!isNaN(parsedR) && parsedR >= 0 && !isNaN(parsedN) && parsedN > 0) {
+                const r = parsedR / 100;
+                return Math.round(amount * (r / 365)); // Daily earnings based on annual rate, rounded to whole coin
+            }
+            // Fallback to old tiered APY for daily earnings if R/N are not valid (though R is now fixed)
+            const baseApyFromTier = getBaseApyFromTier(amount);
+            return Math.round(amount * (baseApyFromTier / 100 / 365)); // Rounded to whole coin
+        };
+
+        // Function to generate a shaded version of a hex color
+        const shadeColor = (hex, percent) => {
+            let f = parseInt(hex.slice(1), 16),
+                t = percent < 0 ? 0 : 255,
+                p = Math.abs(percent),
+                R = f >> 16,
+                G = (f >> 8) & 0x00ff,
+                B = f & 0x0000ff;
+
+            const newR = Math.round((t - R) * p) + R;
+            const newG = Math.round((t - G) * p) + G;
+            const newB = Math.round((t - B) * p) + B;
+
+            const toHex = (c) => {
+                const h = Math.min(255, Math.max(0, c)).toString(16);
+                return h.length === 1 ? "0" + h : h;
+            };
+
+            return `#${toHex(newR)}${toHex(newG)}${toHex(newB)}`;
+        };
+
+        // Define hex values for common Tailwind colors used in themes for calculations
+        const tailwindColorsHex = {
+            'gray-100': '#F3F4F6', 'white': '#FFFFFF', 'gray-200': '#E5E7EB',
+            'gray-900': '#111827', 'gray-600': '#4B5563', 'blue-700': '#1D4ED8',
+            'green-600': '#16A34A', 'gray-50': '#F9FAFB', 'gray-300': '#D1D5DB',
+            'gray-400': '#9CA3AF', 'gray-700': '#374151', 'gray-800': '#1F2937',
+            'gray-950': '#030712', 'gray-500': '#6B7280', 'gray-600': '#4B5563',
+            'blue-300': '#93C5FD', 'green-300': '#86EFAD', 'cyan-400': '#22D3EE',
+            'teal-400': '#2DD4BF', 'blue-950': '#172554', 'blue-900': '#1E3A8A',
+            'blue-800': '#1F2937', 'blue-700': '#1D4ED8',
+            'green-100': '#DCFCE7', 'green-50': '#F0FDF4', 'green-200': '#BBF7D0',
+            'green-700': '#047857', 'green-800': '#065F46',
+            'orange-100': '#FFEDD5', 'yellow-300': '#FCD34D', 'orange-800': '#9A3412',
+            'orange-500': '#F97316', 'orange-600': '#EA580C', 'yellow-600': '#CA8A04',
+            'yellow-200': '#FDE68A', 'yellow-400': '#FACC15', 'yellow-500': '#EAB308',
+            'yellow-50': '#FFFBEB', 'yellow-100': '#FEF3C7', 'yellow-700': '#A16207',
+            'yellow-800': '#854D09', 'red-500': '#EF4444', 'red-700': '#B91C1C',
+            'red-300': '#FCA5A5', 'red-400': '#F87171', 'red-600': '#DC2626',
+            'black': '#000000',
+            // New custom colors
+            'DAC0CF': '#DAC0CF', '5A2A46': '#5A2A46', '331032': '#331032',
+            'E2A3C7': '#E2A3C7', '60435F': '#60435F', 'E6DAE1': '#E6DAE1',
+            'pastel-green': '#C8FCD7', // A light pastel green
+            'dark-mocha-brown': '#211100', // A very dark, rich brown for mocha theme
+            'light-global-text': '#F0F0F0', // Global light text color
+            'dark-global-text': '#1A1A1A',  // Global dark text color
+        };
+
+        // Helper to get hex from Tailwind class
+        const getHexFromTailwindClass = (className) => {
+            const match = className.match(/bg-\[(#[0-9a-fA-F]{6})\]/);
+            if (match) return match[1];
+            // Handle custom hex colors directly if they are passed as 'bg-[#HEX]'
+            if (className.startsWith('bg-[') && className.endsWith(']')) {
+                return className.substring(4, className.length - 1);
+            }
+            const colorName = className.replace(/bg-|border-|text-/, '');
+            return tailwindColorsHex[colorName] || '#000000'; // Default to black if not found
+        };
+
+        // Function to determine if a hex color is light or dark for general text contrast, and return a *derived* contrasting color
+        // It takes the background color and two base text colors (one light, one dark) to choose from.
+        const getContrastTextColor = (backgroundHex, lightTextColorHex, darkTextColorHex) => {
+            // Convert hex to RGB
+            const r = parseInt(backgroundHex.substring(1, 3), 16);
+            const g = parseInt(backgroundHex.substring(3, 5), 16);
+            const b = parseInt(backgroundHex.substring(5, 7), 16);
+
+            // Calculate luminance (using W3C standards for accessibility)
+            const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+
+            // Use a threshold (e.g., 0.5 for general light/dark, or adjust for specific contrast needs)
+            if (luminance > 0.5) { // Background is light, need dark text
+                return `text-[${darkTextColorHex}]`;
+            } else { // Background is dark, need light text
+                return `text-[${lightTextColorHex}]`;
+            }
+        };
+
+        // Function to determine text color specifically for input/display boxes
+        // It takes the input background color and two base text colors (one light, one dark) to choose from.
+        const getSpecialInputTextColor = (inputBgHex, lightTextColorHex, darkTextColorHex) => {
+            const r = parseInt(inputBgHex.substring(1, 3), 16);
+            const g = parseInt(inputBgHex.substring(3, 5), 16);
+            const b = parseInt(inputBgHex.substring(5, 7), 16);
+            const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+
+            // A slightly higher threshold might be good for input fields to ensure readability
+            // Let's use a similar approach as getContrastTextColor for simplicity and consistency.
+            if (luminance > 0.5) { // Input background is light, need dark text
+                return `text-[${darkTextColorHex}]`;
+            } else { // Input background is dark, need light text
+                return `text-[${lightTextColorHex}]`;
+            }
+        };
+
+        // Define theme configurations
+        const themes = {
+          'white-grey': {
+            name: 'White & Grey',
+            bgScreen: 'bg-gray-100',
+            bgContainer: 'bg-white',
+            borderContainer: 'border-gray-200',
+            textAccent: 'text-blue-700', // Static accent
+            textSuccess: 'text-green-600', // Static success
+            bgSection: 'bg-gray-50',
+            borderSection: 'border-gray-200',
+            bgButtonAdd: 'bg-gray-300',
+            hoverBgButtonAdd: 'hover:bg-gray-400',
+            focusRingButtonAdd: 'focus:ring-gray-300',
+            bgButtonPrimary: 'bg-gray-300',
+            hoverBgButtonPrimary: 'hover:bg-gray-400',
+            focusRingButtonPrimary: 'focus:ring-gray-300',
+            bgMessage: 'bg-gray-100',
+            bgResult: 'bg-gray-100',
+            borderResult: 'border-gray-300',
+            bgGoalItem: 'bg-white',
+            borderGoalItem: 'border-gray-200',
+            textDeleteButton: 'text-red-500',
+            hoverTextDeleteButton: 'hover:text-red-700',
+            bgSubNavActive: 'bg-gray-500',
+            bgSubNavInactive: 'bg-gray-400',
+            hoverBgSubNav: 'hover:bg-gray-600',
+
+            // Derived text colors
+            textPrimary: getContrastTextColor(getHexFromTailwindClass('bg-gray-100'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textSecondary: getContrastTextColor(getHexFromTailwindClass('bg-white'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textInput: getSpecialInputTextColor(getHexFromTailwindClass('bg-gray-50'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            placeholderInput: getSpecialInputTextColor(getHexFromTailwindClass('bg-gray-50'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textButtonPrimary: getContrastTextColor(getHexFromTailwindClass('bg-gray-300'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textButtonAdd: getContrastTextColor(getHexFromTailwindClass('bg-gray-300'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            bannerText: getContrastTextColor(getHexFromTailwindClass('bg-gray-300'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textMessage: getContrastTextColor(getHexFromTailwindClass('bg-gray-100'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+          },
+          'slate-grey': {
+            name: 'Slate Grey',
+            bgScreen: 'bg-gray-600',
+            bgContainer: 'bg-gray-700',
+            borderContainer: 'border-gray-500',
+            textAccent: 'text-blue-300',
+            textSuccess: 'text-green-300',
+            bgInput: 'bg-gray-600',
+            borderInput: 'border-gray-500',
+            focusBorderInput: 'focus:border-blue-400',
+            focusRingInput: 'focus:ring-blue-400',
+            bgSection: 'bg-gray-600',
+            borderSection: 'border-gray-500',
+            bgButtonAdd: 'bg-gray-800',
+            hoverBgButtonAdd: 'hover:bg-gray-900',
+            focusRingButtonAdd: 'focus:ring-gray-700',
+            bgButtonPrimary: 'bg-gray-800',
+            hoverBgButtonPrimary: 'hover:bg-gray-900',
+            focusRingButtonPrimary: 'focus:ring-gray-700',
+            bgMessage: 'bg-gray-600',
+            bgResult: 'bg-gray-600',
+            borderResult: 'border-gray-500',
+            bgGoalItem: 'bg-gray-700',
+            borderGoalItem: 'border-gray-600',
+            textDeleteButton: 'text-red-300',
+            hoverTextDeleteButton: 'hover:text-red-500',
+            bgSubNavActive: 'bg-gray-950',
+            bgSubNavInactive: 'bg-gray-900',
+            hoverBgSubNav: 'hover:bg-black',
+
+            // Derived text colors
+            textPrimary: getContrastTextColor(getHexFromTailwindClass('bg-gray-600'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textSecondary: getContrastTextColor(getHexFromTailwindClass('bg-gray-700'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textInput: getSpecialInputTextColor(getHexFromTailwindClass('bg-gray-600'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            placeholderInput: getSpecialInputTextColor(getHexFromTailwindClass('bg-gray-600'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textButtonPrimary: getContrastTextColor(getHexFromTailwindClass('bg-gray-800'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textButtonAdd: getContrastTextColor(getHexFromTailwindClass('bg-gray-800'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            bannerText: getContrastTextColor(getHexFromTailwindClass('bg-gray-800'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textMessage: getContrastTextColor(getHexFromTailwindClass('bg-gray-600'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+          },
+          'mint-green': {
+            name: 'Mint Green',
+            bgScreen: 'bg-green-100',
+            bgContainer: 'bg-green-50',
+            borderContainer: 'border-green-200',
+            textAccent: 'text-green-700',
+            textSuccess: 'text-green-800',
+            bgInput: 'bg-white',
+            borderInput: 'border-green-200',
+            focusBorderInput: 'focus:border-green-500',
+            focusRingInput: 'focus:ring-green-500',
+            bgSection: 'bg-white',
+            borderSection: 'border-green-200',
+            bgButtonAdd: 'bg-green-700',
+            hoverBgButtonAdd: 'hover:bg-green-800',
+            focusRingButtonAdd: 'focus:ring-green-600',
+            bgButtonPrimary: 'bg-green-700',
+            hoverBgButtonPrimary: 'hover:bg-green-800',
+            focusRingButtonPrimary: 'focus:ring-green-600',
+            bgMessage: 'bg-green-100',
+            bgResult: 'bg-green-100',
+            borderResult: 'border-green-300',
+            bgGoalItem: 'bg-green-50',
+            borderGoalItem: 'border-green-200',
+            textDeleteButton: 'text-red-500',
+            hoverTextDeleteButton: 'hover:text-red-700',
+            bgSubNavActive: 'bg-green-900',
+            bgSubNavInactive: 'bg-green-800',
+            hoverBgSubNav: 'hover:bg-green-950',
+
+            // Derived text colors
+            textPrimary: getContrastTextColor(getHexFromTailwindClass('bg-green-100'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textSecondary: getContrastTextColor(getHexFromTailwindClass('bg-green-50'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textInput: getSpecialInputTextColor(getHexFromTailwindClass('bg-white'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            placeholderInput: getSpecialInputTextColor(getHexFromTailwindClass('bg-white'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textButtonPrimary: getContrastTextColor(getHexFromTailwindClass('bg-green-700'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textButtonAdd: getContrastTextColor(getHexFromTailwindClass('bg-green-700'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            bannerText: getContrastTextColor(getHexFromTailwindClass('bg-green-700'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textMessage: getContrastTextColor(getHexFromTailwindClass('bg-green-100'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+          },
+          'navy-blue': {
+            name: 'Navy Blue',
+            bgScreen: 'bg-blue-950',
+            bgContainer: 'bg-blue-900',
+            borderContainer: 'border-blue-800',
+            textAccent: 'text-cyan-400',
+            textSuccess: 'text-teal-400',
+            bgInput: 'bg-blue-800',
+            borderInput: 'border-blue-700',
+            focusBorderInput: 'focus:border-cyan-500',
+            focusRingInput: 'focus:ring-cyan-500',
+            bgSection: 'bg-blue-800',
+            borderSection: 'border-blue-700',
+            bgButtonAdd: 'bg-blue-700',
+            hoverBgButtonAdd: 'hover:bg-blue-800',
+            focusRingButtonAdd: 'focus:ring-blue-600',
+            bgButtonPrimary: 'bg-blue-700',
+            hoverBgButtonPrimary: 'hover:bg-blue-800',
+            focusRingButtonPrimary: 'focus:ring-blue-600',
+            bgMessage: 'bg-blue-800',
+            bgResult: 'bg-blue-800',
+            borderResult: 'border-blue-700',
+            bgGoalItem: 'bg-blue-900',
+            borderGoalItem: 'border-blue-800',
+            textDeleteButton: 'text-red-400',
+            hoverTextDeleteButton: 'hover:text-red-600',
+            bgSubNavActive: 'bg-blue-950',
+            bgSubNavInactive: 'bg-blue-900',
+            hoverBgSubNav: 'hover:bg-blue-900',
+
+            // Derived text colors
+            textPrimary: getContrastTextColor(getHexFromTailwindClass('bg-blue-950'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textSecondary: getContrastTextColor(getHexFromTailwindClass('bg-blue-900'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textInput: getSpecialInputTextColor(getHexFromTailwindClass('bg-blue-800'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            placeholderInput: getSpecialInputTextColor(getHexFromTailwindClass('bg-blue-800'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textButtonPrimary: getContrastTextColor(getHexFromTailwindClass('bg-blue-700'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textButtonAdd: getContrastTextColor(getHexFromTailwindClass('bg-blue-700'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            bannerText: getContrastTextColor(getHexFromTailwindClass('bg-blue-700'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textMessage: getContrastTextColor(getHexFromTailwindClass('bg-blue-800'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+          },
+          'candy-corn': {
+            name: 'Candy Corn',
+            bgScreen: 'bg-orange-100',
+            bgContainer: 'bg-white',
+            borderContainer: 'border-yellow-300',
+            textAccent: 'text-orange-600',
+            textSuccess: 'text-yellow-600',
+            bgInput: 'bg-white',
+            borderInput: 'border-yellow-200',
+            focusBorderInput: 'focus:border-orange-500',
+            focusRingInput: 'focus:ring-orange-500',
+            bgSection: 'bg-white',
+            borderSection: 'border-yellow-200',
+            bgButtonAdd: 'bg-yellow-400',
+            hoverBgButtonAdd: 'hover:bg-yellow-500',
+            focusRingButtonAdd: 'focus:ring-yellow-300',
+            bgButtonPrimary: 'bg-yellow-400',
+            hoverBgButtonPrimary: 'hover:bg-yellow-500',
+            focusRingButtonPrimary: 'focus:ring-yellow-300',
+            bgMessage: 'bg-yellow-50',
+            bgResult: 'bg-yellow-50',
+            borderResult: 'border-yellow-200',
+            bgGoalItem: 'bg-white',
+            borderGoalItem: 'border-yellow-100',
+            textDeleteButton: 'text-red-500',
+            hoverTextDeleteButton: 'hover:text-red-700',
+            bgSubNavActive: 'bg-yellow-700',
+            bgSubNavInactive: 'bg-yellow-600',
+            hoverBgSubNav: 'hover:bg-yellow-800',
+
+            // Derived text colors
+            textPrimary: getContrastTextColor(getHexFromTailwindClass('bg-orange-100'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textSecondary: getContrastTextColor(getHexFromTailwindClass('bg-white'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textInput: getSpecialInputTextColor(getHexFromTailwindClass('bg-white'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            placeholderInput: getSpecialInputTextColor(getHexFromTailwindClass('bg-white'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textButtonPrimary: getContrastTextColor(getHexFromTailwindClass('bg-yellow-400'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textButtonAdd: getContrastTextColor(getHexFromTailwindClass('bg-yellow-400'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            bannerText: getContrastTextColor(getHexFromTailwindClass('bg-yellow-400'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textMessage: getContrastTextColor(getHexFromTailwindClass('bg-yellow-50'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+          },
+          'mocha': {
+            name: 'Mocha',
+            bgScreen: 'bg-[#D58936]',
+            bgContainer: `bg-[${shadeColor('#D58936', 0.1)}]`,
+            borderContainer: `border-[${shadeColor('#D58936', -0.2)}]`,
+            textAccent: `text-[${shadeColor('#502419', 0.2)}]`,
+            textSuccess: 'text-green-600',
+            bgInput: `bg-[${shadeColor('#D58936', 0.4)}]`,
+            borderInput: `border-[${shadeColor('#D58936', -0.1)}]`,
+            focusBorderInput: 'focus:border-[#502419]',
+            focusRingInput: 'focus:ring-[#502419]',
+            bgSection: `bg-[${shadeColor('#D58936', 0.05)}]`,
+            borderSection: `border-[${shadeColor('#D58936', -0.15)}]`,
+            bgButtonAdd: 'bg-[#502419]',
+            hoverBgButtonAdd: `hover:hover:bg-[${shadeColor('#502419', -0.15)}]`,
+            focusRingButtonAdd: `focus:ring-[${shadeColor('#502419', 0.15)}]`,
+            bgButtonPrimary: 'bg-[#502419]',
+            hoverBgButtonPrimary: `hover:bg-[${shadeColor('#502419', -0.15)}]`,
+            focusRingButtonPrimary: `focus:ring-[${shadeColor('#502419', 0.15)}]`,
+            bgMessage: `bg-[${shadeColor('#D58936', 0.1)}]`,
+            bgResult: `bg-[${shadeColor('#D58936', 0.1)}]`,
+            borderResult: `border-[${shadeColor('#D58936', -0.15)}]`,
+            bgGoalItem: `bg-[${shadeColor('#D58936', 0.08)}]`,
+            borderGoalItem: `border-[${shadeColor('#D58936', -0.12)}]`,
+            textDeleteButton: 'text-red-500',
+            hoverTextDeleteButton: 'hover:text-red-700',
+            bgSubNavActive: `bg-[${shadeColor('#502419', -0.25)}]`,
+            bgSubNavInactive: `bg-[${shadeColor('#502419', 0.1)}]`,
+            hoverBgSubNav: `hover:bg-[${shadeColor('#502419', -0.35)}]`,
+
+            // Derived text colors
+            textPrimary: getContrastTextColor(getHexFromTailwindClass('bg-[#D58936]'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textSecondary: getContrastTextColor(getHexFromTailwindClass(shadeColor('#D58936', 0.1)), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textInput: getSpecialInputTextColor(getHexFromTailwindClass(shadeColor('#D58936', 0.4)), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            placeholderInput: getSpecialInputTextColor(getHexFromTailwindClass(shadeColor('#D58936', 0.4)), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textButtonPrimary: getContrastTextColor(getHexFromTailwindClass('bg-[#502419]'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textButtonAdd: getContrastTextColor(getHexFromTailwindClass('bg-[#502419]'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            bannerText: getContrastTextColor(getHexFromTailwindClass('bg-[#502419]'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textMessage: getContrastTextColor(getHexFromTailwindClass(shadeColor('#D58936', 0.1)), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+          },
+          'teal-delight': {
+            name: 'Teal Delight',
+            bgScreen: 'bg-[#85FFC7]',
+            bgContainer: `bg-[${shadeColor('#85FFC7', 0.1)}]`,
+            borderContainer: `border-[${shadeColor('#85FFC7', -0.2)}]`,
+            textAccent: `text-[${shadeColor('#297373', 0.2)}]`,
+            textSuccess: 'text-green-600',
+            bgInput: `bg-[${shadeColor('#85FFC7', 0.4)}]`,
+            borderInput: `border-[${shadeColor('#85FFC7', -0.1)}]`,
+            focusBorderInput: 'focus:border-[#297373]',
+            focusRingInput: 'focus:ring-[#297373]',
+            bgSection: `bg-[${shadeColor('#85FFC7', 0.05)}]`,
+            borderSection: `border-[${shadeColor('#85FFC7', -0.15)}]`,
+            bgButtonAdd: 'bg-[#297373]',
+            hoverBgButtonAdd: `hover:bg-[${shadeColor('#297373', -0.15)}]`,
+            focusRingButtonAdd: `focus:ring-[${shadeColor('#297373', 0.15)}]`,
+            bgButtonPrimary: 'bg-[#297373]',
+            hoverBgButtonPrimary: `hover:bg-[${shadeColor('#297373', -0.15)}]`,
+            focusRingButtonPrimary: `focus:ring-[${shadeColor('#297373', 0.15)}]`,
+            bgMessage: `bg-[${shadeColor('#85FFC7', 0.1)}]`,
+            bgResult: `bg-[${shadeColor('#85FFC7', 0.1)}]`,
+            borderResult: `border-[${shadeColor('#85FFC7', -0.15)}]`,
+            bgGoalItem: `bg-[${shadeColor('#85FFC7', 0.08)}]`,
+            borderGoalItem: `border-[${shadeColor('#85FFC7', -0.12)}]`,
+            textDeleteButton: 'text-red-500',
+            hoverTextDeleteButton: 'hover:text-red-700',
+            bgSubNavActive: `bg-[${shadeColor('#297373', -0.25)}]`,
+            bgSubNavInactive: `bg-[${shadeColor('#297373', 0.1)}]`,
+            hoverBgSubNav: `hover:bg-[${shadeColor('#297373', -0.35)}]`,
+
+            // Derived text colors
+            textPrimary: getContrastTextColor(getHexFromTailwindClass('bg-[#85FFC7]'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textSecondary: getContrastTextColor(getHexFromTailwindClass(shadeColor('#85FFC7', 0.1)), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textInput: getSpecialInputTextColor(getHexFromTailwindClass(shadeColor('#85FFC7', 0.4)), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            placeholderInput: getSpecialInputTextColor(getHexFromTailwindClass(shadeColor('#85FFC7', 0.4)), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textButtonPrimary: getContrastTextColor(getHexFromTailwindClass('bg-[#297373]'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textButtonAdd: getContrastTextColor(getHexFromTailwindClass('bg-[#297373]'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            bannerText: getContrastTextColor(getHexFromTailwindClass('bg-[#297373]'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textMessage: getContrastTextColor(getHexFromTailwindClass(shadeColor('#85FFC7', 0.1)), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+          },
+          'Pink Dayz': {
+            name: 'Pink Dayz',
+            bgScreen: 'bg-[#E2A3C7]',
+            bgContainer: `bg-[${shadeColor('#E2A3C7', -0.1)}]`,
+            borderContainer: `border-[${shadeColor('#E2A3C7', -0.3)}]`,
+            textAccent: `text-[${getHexFromTailwindClass('DAC0CF')}]`,
+            textSuccess: 'text-green-600',
+            bgInput: 'bg-[#E6DAE1]',
+            borderInput: `border-[${shadeColor('#E6DAE1', -0.2)}]`,
+            focusBorderInput: 'focus:border-[#60435F]',
+            focusRingInput: 'focus:ring-[#60435F]',
+            bgSection: `bg-[${shadeColor('#E2A3C7', -0.05)}]`,
+            borderSection: `border-[${shadeColor('#E2A3C7', -0.25)}]`,
+            bgButtonAdd: 'bg-[#60435F]',
+            hoverBgButtonAdd: `hover:bg-[${shadeColor('#60435F', -0.15)}]`,
+            focusRingButtonAdd: `focus:ring-[${shadeColor('#60435F', 0.15)}]`,
+            bgButtonPrimary: 'bg-[#60435F]',
+            hoverBgButtonPrimary: `hover:bg-[${shadeColor('#60435F', -0.15)}]`,
+            focusRingButtonPrimary: `focus:ring-[${shadeColor('#60435F', 0.15)}]`,
+            bgMessage: `bg-[${shadeColor('#E2A3C7', -0.1)}]`,
+            bgResult: `bg-[${shadeColor('#E2A3C7', -0.1)}]`,
+            borderResult: `border-[${shadeColor('#E2A3C7', -0.25)}]`,
+            bgGoalItem: `bg-[${shadeColor('#E2A3C7', -0.08)}]`,
+            borderGoalItem: `border-[${shadeColor('#E2A3C7', -0.12)}]`,
+            textDeleteButton: 'text-red-500',
+            hoverTextDeleteButton: 'hover:text-red-700',
+            bgSubNavActive: `bg-[${shadeColor('#60435F', -0.25)}]`,
+            bgSubNavInactive: `bg-[${shadeColor('#60435F', 0.1)}]`,
+            hoverBgSubNav: `hover:bg-[${shadeColor('#60435F', -0.35)}]`,
+
+            // Derived text colors
+            textPrimary: getContrastTextColor(getHexFromTailwindClass('bg-[#E2A3C7]'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textSecondary: getContrastTextColor(getHexFromTailwindClass(shadeColor('#E2A3C7', -0.1)), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textInput: getSpecialInputTextColor(getHexFromTailwindClass('bg-[#E6DAE1]'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            placeholderInput: getSpecialInputTextColor(getHexFromTailwindClass('bg-[#E6DAE1]'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textButtonPrimary: getContrastTextColor(getHexFromTailwindClass('bg-[#60435F]'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textButtonAdd: getContrastTextColor(getHexFromTailwindClass('bg-[#60435F]'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            bannerText: getContrastTextColor(getHexFromTailwindClass('bg-[#60435F]'), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+            textMessage: getContrastTextColor(getHexFromTailwindClass(shadeColor('#E2A3C7', -0.1)), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text']),
+          },
+        };
+
+        // DailySalesHistorySheet Component (New Component)
+        const DailySalesHistorySheet = ({ isOpen, onClose, history, themeClasses }) => {
+            if (!isOpen) return null;
+
+            // Group history by date and sum amounts for each day
+            const dailyTotals = history.reduce((acc, deposit) => {
+                const date = new Date(deposit.date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+                acc[date] = (acc[date] || 0) + Math.round(deposit.amount); // Ensure rounding
+                return acc;
+            }, {});
+
+            // Convert to array of {date, total} objects and sort by date descending
+            const sortedDailyTotals = Object.entries(dailyTotals)
+                .map(([date, total]) => ({ date, total }))
+                .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+                    <div className={`${themeClasses.bgContainer} p-6 rounded-2xl shadow-xl max-w-md w-full relative ${themeClasses.borderContainer} border`}>
+                        <h3 className={`text-2xl font-bold mb-4 ${themeClasses.textPrimary} text-center`}>Daily Deposit History (Last 30 Days)</h3>
+                        <div className="max-h-80 overflow-y-auto pr-2">
+                            {sortedDailyTotals.length === 0 ? (
+                                <p className={`${themeClasses.textSecondary} text-center py-4`}>No deposits in the last 30 days.</p>
+                            ) : (
+                                <ul className="space-y-2">
+                                    {sortedDailyTotals.map(({ date, total }) => (
+                                        <li key={date} className={`${themeClasses.bgSection} p-3 rounded-lg flex justify-between items-center ${themeClasses.borderSection} border`}>
+                                            <span className={`${themeClasses.textPrimary} font-medium`}>{date}</span>
+                                            <span className={`${themeClasses.textAccent} font-bold`}>₡{total.toLocaleString('en-US', {maximumFractionDigits: 0})}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                        <div className="flex justify-center mt-6">
+                            <button
+                                onClick={onClose}
+                                className={`px-6 py-3 rounded-full ${themeClasses.bgButtonPrimary} ${themeClasses.hoverBgButtonPrimary} ${themeClasses.textButtonPrimary} font-bold transition duration-300`}
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // TierProgressBox Component
+        const TierProgressBox = ({ currentAmount, targetAmount, themeClasses }) => {
+            // Define 20 levels (0-19) representing 5% increments, plus level 20 for 100%
+            const levels = Array.from({ length: 20 }, (_, i) => (i + 1) * 0.05); // [0.05, 0.10, ..., 1.00]
+
+            const overallProgressPercent = targetAmount > 0 ? (currentAmount / targetAmount) * 100 : 0;
+            let displayLevel = 0;
+            let progressWithinCurrentLevel = 0; // This will be used for the bar
+            let nextLevelTargetCoins = 0;
+            let currentLevelCoinsStart = 0;
+            let currentLevelCoinsEnd = 0;
+            let levelMessage = '';
+
+            if (overallProgressPercent >= 100) {
+                displayLevel = 20;
+                levelMessage = "Congratulations! Goal Achieved!";
+                progressWithinCurrentLevel = 100; // Full bar when goal is achieved
+                currentLevelCoinsStart = targetAmount; // At target
+                currentLevelCoinsEnd = targetAmount; // At target
+            } else {
+                // Find the current level based on overall progress
+                const currentLevelIndex = levels.findIndex(levelThreshold => overallProgressPercent < (levelThreshold * 100));
+
+                if (currentLevelIndex === -1) { // Should only happen if overallProgressPercent is 100% or very close
+                    displayLevel = 20;
+                    levelMessage = "Congratulations! Goal Achieved!";
+                    progressWithinCurrentLevel = 100;
+                    currentLevelCoinsStart = targetAmount;
+                    currentLevelCoinsEnd = targetAmount;
+                } else {
+                    displayLevel = currentLevelIndex; // Level 0-19
+
+                    let currentLevelStartPercent = displayLevel * 5;
+                    const nextLevelEndPercent = (displayLevel + 1) * 5;
+
+                    currentLevelCoinsStart = targetAmount * (currentLevelStartPercent / 100);
+                    currentLevelCoinsEnd = targetAmount * (nextLevelEndPercent / 100);
+
+                    nextLevelTargetCoins = Math.round(currentLevelCoinsEnd);
+
+                    if (currentLevelCoinsEnd > currentLevelCoinsStart) {
+                        progressWithinCurrentLevel = ((currentAmount - currentLevelCoinsStart) / (currentLevelCoinsEnd - currentLevelCoinsStart)) * 100;
+                    } else {
+                        progressWithinCurrentLevel = 0; // Should be 0 if currentAmount is at or below currentLevelCoinsStart
+                    }
+                    progressWithinCurrentLevel = Math.max(0, Math.min(100, progressWithinCurrentLevel)); // Clamp between 0 and 100
+
+                    levelMessage = `You are ${Math.round(progressWithinCurrentLevel)}% towards Level ${displayLevel + 1}`;
+                }
+            }
+
+
+            return (
+                <div className={`${themeClasses.bgContainer} p-6 sm:p-8 rounded-2xl shadow-xl w-full max-w-xs ${themeClasses.borderContainer} border mt-8 mb-8 sm:ml-4`}>
+                    <h3 className={`text-xl font-bold text-center mb-4 ${themeClasses.textPrimary}`}>Tier Progress</h3>
+                    <div className="space-y-3">
+                        <p className={`text-lg font-semibold ${themeClasses.textAccent} text-center`}>
+                            Level: <span className="text-2xl">{displayLevel}</span> of 20
+                        </p>
+                        {displayLevel < 20 && (
+                            <p className={`${themeClasses.textSecondary} text-sm text-center`}>
+                                You have <span className={`${themeClasses.textPrimary} font-bold`}>
+                                    ₡{Math.round(currentAmount).toLocaleString('en-US', {maximumFractionDigits: 0})}
+                                </span> of <span className={`${themeClasses.textPrimary} font-bold`}>
+                                    ₡{Math.round(currentLevelCoinsEnd).toLocaleString('en-US', {maximumFractionDigits: 0})}
+                                </span> for this level.
+                            </p>
+                        )}
+                        {displayLevel < 20 && (
+                            <p className={`${themeClasses.textSecondary} text-sm text-center`}>
+                                Next Level Target: <span className={`${themeClasses.textPrimary} font-bold`}>₡{nextLevelTargetCoins.toLocaleString('en-US', {maximumFractionDigits: 0})}</span>
+                            </p>
+                        )}
+
+                        <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
+                            <div
+                                className="bg-blue-600 h-2.5 rounded-full"
+                                style={{ width: `${progressWithinCurrentLevel}%` }}
+                            ></div>
+                        </div>
+                        <p className={`${themeClasses.textSecondary} text-sm text-center`}>
+                            {levelMessage}
+                        </p>
+                        {displayLevel < 20 && (
+                            <p className={`${themeClasses.textSecondary} text-sm text-center`}>
+                                Overall Progress: {Math.round(overallProgressPercent)}%
+                            </p>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // GoalEditPage Component
+        const GoalEditPage = ({ goal, themeClasses, updateGoal, onBack, salesDepositHistory, updateSalesDepositHistory, onToggleSalesHistoryModal, exportSingleGoal }) => {
+          const [currentAmountState, setCurrentAmountState] = useState(goal.currentAmount.toString());
+          const [oneTimeAddAmount, setOneTimeAddAmount] = useState('');
+          const [estimatedDaysState, setEstimatedDaysState] = useState(goal.estimatedDays);
+          const [currentAPYState, setCurrentAPYState] = useState(goal.currentAPY);
+          const [annualInterestRateState] = useState('10'); // Fixed to 10%
+          const [compoundingFrequencyState, setCompoundingFrequencyState] = useState(goal.compoundingFrequency ? goal.compoundingFrequency.toString() : '365'); // Default to 365, or load from goal
+          const [apyAmountEarnedState, setApyAmountEarnedState] = useState(0); // New state for APY Amount Earned
+          const [message, setMessage] = useState('');
+
+          // History for undo/redo
+          const [amountHistory, setAmountHistory] = useState([]);
+          const [historyPointer, setHistoryPointer] = useState(-1); // -1 means no history yet, 0 is first entry
+
+          const originalTargetAmount = goal.targetAmount;
+
+          const getAverageDailySalesContribution = (history, daysWindow = 30) => {
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+
+              const startDate = new Date(today);
+              startDate.setDate(today.getDate() - daysWindow);
+
+              const recentSales = history.filter(deposit => {
+                  const depositDate = new Date(deposit.date);
+                  depositDate.setHours(0, 0, 0, 0);
+                  return depositDate >= startDate && depositDate <= today; // Corrected comparison
+              });
+
+              if (recentSales.length === 0) {
+                  return 0;
+              }
+
+              const totalAmount = recentSales.reduce((sum, deposit) => sum + Math.round(deposit.amount), 0); // Ensure rounding
+              return Math.round(totalAmount / daysWindow); // Round average to whole coin
+          };
+
+          useEffect(() => {
+              const initialAmount = Math.round(goal.currentAmount);
+              setCurrentAmountState(initialAmount.toString()); // Round on load
+              setEstimatedDaysState(goal.estimatedDays);
+              setCurrentAPYState(goal.currentAPY);
+              setCompoundingFrequencyState(goal.compoundingFrequency ? goal.compoundingFrequency.toString() : '365'); // Load N or default to 365
+              setMessage('');
+              // Calculate APY Amount Earned on mount/goal change
+              const r = parseFloat(annualInterestRateState) / 100;
+              const calculatedApyEarned = Math.round(initialAmount * (r / 365)); // Rounded to whole coin
+              setApyAmountEarnedState(calculatedApyEarned);
+
+              // Initialize history with the current amount
+              setAmountHistory([initialAmount]);
+              setHistoryPointer(0);
+          }, [goal, annualInterestRateState]);
+
+          const calculateDaysForEditPage = () => {
+            setMessage('');
+            const current = Math.round(parseFloat(currentAmountState || '0')); // Ensure current is whole
+            const target = Math.round(parseFloat(originalTargetAmount || '0')); // Ensure target is whole
+            const avgSalesContribution = getAverageDailySalesContribution(salesDepositHistory);
+
+            if (isNaN(current) || isNaN(target) || current <= 0 || target <= 0) {
+              setMessage('Invalid numbers for calculation. Ensure Current Amount and Target Amount are positive.');
+              setEstimatedDaysState(null);
+              setCurrentAPYState(null);
+              setApyAmountEarnedState(0); // Reset APY Amount Earned
+              return;
+            }
+
+            if (target <= current) {
+              setMessage('Target must be greater than current amount.');
+              setEstimatedDaysState(0);
+              setCurrentAPYState(null);
+              setApyAmountEarnedState(0); // Reset APY Amount Earned
+              return;
+            }
+
+            const parsedR = parseFloat(annualInterestRateState); // Use fixed R
+            const parsedN = parseInt(compoundingFrequencyState);
+
+            if (isNaN(parsedR) || parsedR < 0 || isNaN(parsedN) || parsedN <= 0) {
+                setMessage('Please ensure Compounding Frequency is a valid positive number.');
+                setEstimatedDaysState(null);
+                setCurrentAPYState(null);
+                setApyAmountEarnedState(0); // Reset APY Amount Earned
+                return;
+            }
+
+            const r = parsedR / 100;
+            const N = parsedN;
+
+            // Calculate daily earnings based on the new algorithm: P * (r/365)
+            const dailyEarningsToUse = Math.round(current * (r / 365)); // Rounded to whole coin
+            setApyAmountEarnedState(dailyEarningsToUse); // Update APY Amount Earned display
+
+            // Total daily growth combines daily earnings (from APY) with sales contribution
+            const totalDailyGrowth = dailyEarningsToUse + avgSalesContribution;
+
+            if (totalDailyGrowth <= 0) {
+                setMessage('Total daily growth must be positive to reach the target.');
+                setEstimatedDaysState(null);
+                setCurrentAPYState(null);
+                return;
+            }
+
+            // Calculate the overall daily growth rate
+            const rate = totalDailyGrowth / current;
+
+            // Calculate the effective annual percentage yield based on this combined daily rate
+            const effectiveAPY = (Math.pow((1 + rate), 365) - 1) * 100;
+            setEstimatedDaysState(Math.ceil(Math.log(target / current) / Math.log(1 + rate)));
+            setCurrentAPYState(effectiveAPY);
+            setMessage('Calculation updated!');
+          };
+
+          const addOneTimeAmountForEditPage = () => {
+            setMessage('');
+            const amountToAdd = Math.round(parseFloat(oneTimeAddAmount || '0')); // Round to whole coin
+
+            if (isNaN(amountToAdd) || amountToAdd <= 0) {
+              setMessage('Please enter a valid positive amount to add.');
+              return;
+            }
+
+            const newCurrentAmount = Math.round(parseFloat(currentAmountState || '0') + amountToAdd); // Round to whole coin
+            setCurrentAmountState(newCurrentAmount.toString());
+            setOneTimeAddAmount('');
+            setCompoundingFrequencyState('365'); // Set compounding frequency to 365 on adding coins
+
+            const todayDate = new Date().toISOString().split('T')[0];
+            updateSalesDepositHistory(todayDate, amountToAdd); // No await needed for local storage
+
+            // Update history
+            const newHistory = amountHistory.slice(0, historyPointer + 1); // Truncate history if redo was possible
+            newHistory.push(newCurrentAmount);
+            if (newHistory.length > 10) { // Keep only the last 10 entries
+                newHistory.shift();
+            }
+            setAmountHistory(newHistory);
+            setHistoryPointer(newHistory.length - 1);
+
+            // Recalculate days after adding one-time amount
+            setTimeout(calculateDaysForEditPage, 50);
+          };
+
+          const undoLastAmount = () => {
+            if (historyPointer > 0) {
+              const newPointer = historyPointer - 1;
+              setCurrentAmountState(amountHistory[newPointer].toString());
+              setHistoryPointer(newPointer);
+              setMessage('Undo successful.');
+              setTimeout(calculateDaysForEditPage, 50);
+            } else {
+              setMessage('No more actions to undo.');
+            }
+          };
+
+          const redoLastAmount = () => {
+            if (historyPointer < amountHistory.length - 1) {
+              const newPointer = historyPointer + 1;
+              setCurrentAmountState(amountHistory[newPointer].toString());
+              setHistoryPointer(newPointer);
+              setMessage('Redo successful.');
+              setTimeout(calculateDaysForEditPage, 50);
+            } else {
+              setMessage('No more actions to redo.');
+            }
+          };
+
+          const saveUpdatedGoal = async () => {
+            if (estimatedDaysState === null) {
+              setMessage('Please recalculate days before saving updates.');
+              return;
+            }
+
+            try {
+              const currentParsed = Math.round(parseFloat(currentAmountState)); // Round to whole coin
+              const rParsed = parseFloat(annualInterestRateState);
+              const nParsed = parseInt(compoundingFrequencyState);
+
+              let dailyEarningsToSave = 0;
+              if (!isNaN(currentParsed) && currentParsed > 0 && !isNaN(rParsed) && rParsed >= 0 && !isNaN(nParsed) && nParsed > 0) {
+                  dailyEarningsToSave = Math.round(currentParsed * (rParsed / 100 / 365)); // Rounded to whole coin
+              }
+
+              const updatedGoal = {
+                ...goal,
+                currentAmount: currentParsed, // Save as whole coin
+                currentDailyEarnings: dailyEarningsToSave, // Save the determined daily earnings
+                annualInterestRate: parseFloat(annualInterestRateState), // Save R
+                compoundingFrequency: parseInt(compoundingFrequencyState), // Save N
+                estimatedDays: estimatedDaysState,
+                currentAPY: currentAPYState, // Save the calculated effective APY
+                dateUpdated: new Date().toLocaleDateString(),
+                timeUpdated: new Date().toLocaleTimeString(),
+              };
+              updateGoal(updatedGoal); // No await needed for local storage
+
+              setMessage('Goal updated successfully!');
+            } catch (error) {
+              console.error("Error updating goal:", error);
+              setMessage(`Error updating goal: ${error.message}`);
+            }
+          };
+
+          const avgSalesContributionDisplay = getAverageDailySalesContribution(salesDepositHistory);
+
+          return (
+            <div className={`flex flex-col sm:flex-row items-start justify-center w-full max-w-4xl mx-auto gap-4`}> {/* Flex container for side-by-side */}
+                <div className={`${themeClasses.bgContainer} p-6 sm:p-10 rounded-2xl shadow-xl w-full max-w-2xl ${themeClasses.borderContainer} border mt-8 mb-8`}>
+                    <div className="relative mb-4">
+                        <button
+                            onClick={onBack}
+                            className={`absolute top-0 left-0 p-2 rounded-full ${themeClasses.textPrimary} hover:text-blue-500 transition-colors duration-200`}
+                            aria-label="Back to Saved Goals"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                            </svg>
+                        </button>
+                        <h2 className={`text-xl font-bold text-center ${themeClasses.textPrimary}`}>
+                            Goal Details & Update
+                        </h2>
+                    </div>
+
+                    {goal.name && (
+                        <p className={`text-xl font-bold text-center mb-2 ${themeClasses.textAccent}`}>
+                            Goal: {goal.name}
+                        </p>
+                    )}
+                    <p className={`text-sm font-semibold ${themeClasses.textPrimary} mb-4 text-center`}>
+                      Saved: {goal.dateAdded} at {goal.timeAdded}
+                      {goal.dateUpdated && <span className="ml-2 text-xs opacity-75">(Updated: {goal.dateUpdated} at {goal.timeUpdated})</span>}
+                    </p>
+
+                    <div className="space-y-3 mb-4">
+                      <div>
+                        <label className={`block ${themeClasses.textPrimary} text-sm font-semibold mb-1`}>
+                          Current Bank Amount (coins)
+                        </label>
+                        {/* Display boxes use themeClasses.textInput */}
+                        <p className={`w-full p-3 rounded-lg ${themeClasses.bgInput} ${themeClasses.borderInput} border ${themeClasses.textInput}`}>
+                          ₡{Math.round(parseFloat(currentAmountState)).toLocaleString('en-US', {maximumFractionDigits: 0})}
+                        </p>
+                      </div>
+                      {/* APY Amount Earned display */}
+                      <div>
+                        <label className={`block ${themeClasses.textPrimary} text-sm font-semibold mb-1`}>
+                          APY Amount Earned (coins)
+                        </label>
+                        {/* Display boxes use themeClasses.textInput */}
+                        <p className={`w-full p-3 rounded-lg ${themeClasses.bgInput} ${themeClasses.borderInput} border ${themeClasses.textInput}`}>
+                          ₡{Math.round(apyAmountEarnedState).toLocaleString('en-US', {maximumFractionDigits: 0})}
+                        </p>
+                      </div>
+
+                      {/* Annual Interest Rate (fixed) */}
+                      <div>
+                        <label htmlFor="editPageAnnualInterestRate" className={`block ${themeClasses.textPrimary} text-sm font-semibold mb-1`}>
+                          Annual Interest Rate (%)
+                        </label>
+                        <input
+                          type="number"
+                          id="editPageAnnualInterestRate"
+                          value={annualInterestRateState}
+                          readOnly={true}
+                          className={`w-full p-3 rounded-lg ${themeClasses.bgInput} ${themeClasses.borderInput} border ${themeClasses.focusBorderInput} focus:ring ${themeClasses.focusRingInput} focus:ring-opacity-50 ${themeClasses.textInput} ${themeClasses.placeholderInput}`}
+                        />
+                      </div>
+
+                      {/* Compounding Frequency (read-only, updates on add coins) */}
+                      <div>
+                        <label htmlFor="editPageCompoundingFrequency" className={`block ${themeClasses.textPrimary} text-sm font-semibold mb-1`}>
+                          Compounding Frequency (per year)
+                        </label>
+                        <input
+                          type="number"
+                          id="editPageCompoundingFrequency"
+                          value={compoundingFrequencyState}
+                          readOnly={true}
+                          className={`w-full p-3 rounded-lg ${themeClasses.bgInput} ${themeClasses.borderInput} border ${themeClasses.focusBorderInput} focus:ring ${themeClasses.focusRingInput} focus:ring-opacity-50 ${themeClasses.textInput} ${themeClasses.placeholderInput}`}
+                        />
+                      </div>
+
+                      <div className={`${themeClasses.bgSection} p-3 rounded-lg ${themeClasses.borderSection} border`}>
+                        <div className="flex items-center mb-2">
+                            <label htmlFor="editPageOneTimeAddAmount" className={`block ${themeClasses.textPrimary} text-sm font-semibold mr-2`}>
+                                Add Coins from Sale (one-time)
+                            </label>
+                            <button
+                                onClick={undoLastAmount}
+                                disabled={historyPointer <= 0}
+                                className={`w-8 h-8 flex items-center justify-center rounded-md ${themeClasses.bgButtonAdd} ${themeClasses.hoverBgButtonAdd} ${themeClasses.textButtonAdd} disabled:opacity-50 disabled:cursor-not-allowed mr-1`}
+                                title="Undo last coin addition"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2.5" stroke="currentColor" className="w-5 h-5">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+                                </svg>
+                            </button>
+                            <button
+                                onClick={redoLastAmount}
+                                disabled={historyPointer >= amountHistory.length - 1}
+                                className={`w-8 h-8 flex items-center justify-center rounded-md ${themeClasses.bgButtonAdd} ${themeClasses.hoverBgButtonAdd} ${themeClasses.textButtonAdd} disabled:opacity-50 disabled:cursor-not-allowed`}
+                                title="Redo last undone action"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2.5" stroke="currentColor" className="w-5 h-5">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 9l6-6m0 0l-6-6m6 6H9a6 6 0 000 12h3" />
+                                </svg>
+                            </button>
+                        </div>
+                        <input
+                          type="number"
+                          id="editPageOneTimeAddAmount"
+                          value={oneTimeAddAmount}
+                          onChange={(e) => {setOneTimeAddAmount(Math.round(parseFloat(e.target.value || '0')).toString()); setMessage('');}}
+                          placeholder="e.g., 100000"
+                          step="1"
+                          className={`w-full p-2 rounded-lg ${themeClasses.bgInput} border ${themeClasses.borderInput} ${themeClasses.focusBorderInput} focus:ring ${themeClasses.focusRingInput} focus:ring-opacity-50 ${themeClasses.textInput} ${themeClasses.placeholderInput} mb-3`}
+                        />
+                        <button
+                          onClick={addOneTimeAmountForEditPage}
+                          className={`w-full ${themeClasses.bgButtonAdd} ${themeClasses.hoverBgButtonAdd} ${themeClasses.textButtonAdd} font-bold py-4 px-6 rounded-full shadow-lg transition-all duration-300 transform hover:-translate-y-1 focus:outline-none focus:ring-4 ${themeClasses.focusRingButtonAdd} focus:ring-opacity-75 text-sm`}
+                        >
+                          Add to Current Balance
+                        </button>
+                      </div>
+
+                      <div>
+                        <label className={`block ${themeClasses.textPrimary} text-sm font-semibold mb-1`}>
+                          Target Bank Amount (coins)
+                        </label>
+                        {/* Display boxes use themeClasses.textInput */}
+                        <p className={`w-full p-3 rounded-lg ${themeClasses.bgInput} ${themeClasses.borderInput} border ${themeClasses.textInput}`}>
+                          ₡{Math.round(originalTargetAmount).toLocaleString('en-US', {maximumFractionDigits: 0})}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row gap-2 mb-3">
+                      <button
+                        onClick={calculateDaysForEditPage}
+                        className={`flex-1 ${themeClasses.bgButtonPrimary} ${themeClasses.hoverBgButtonPrimary} ${themeClasses.textButtonPrimary} font-bold py-4 px-6 rounded-full shadow-lg transition-all duration-300 transform hover:-translate-y-1 focus:outline-none focus:ring-4 ${themeClasses.focusRingButtonPrimary} text-sm`}
+                      >
+                        Recalculate Days
+                      </button>
+                      <button
+                        onClick={saveUpdatedGoal}
+                        className={`flex-1 ${themeClasses.bgButtonPrimary} ${themeClasses.hoverBgButtonPrimary} ${themeClasses.textButtonPrimary} font-bold py-4 px-6 rounded-full shadow-lg transition-all duration-300 transform hover:-translate-y-1 focus:outline-none focus:ring-4 ${themeClasses.focusRingButtonPrimary} text-sm`}
+                      >
+                        Save Goal Update
+                      </button>
+                    </div>
+
+                    {message && (
+                      <p className={`text-center text-xs mb-3 p-1 rounded-lg ${themeClasses.bgMessage} ${themeClasses.textMessage}`}>
+                        {message}
+                      </p>
+                    )}
+
+                    {estimatedDaysState !== null && (
+                      <div className={`${themeClasses.bgResult} p-3 rounded-lg shadow-inner ${themeClasses.borderResult} border`}>
+                        <button
+                          onClick={onToggleSalesHistoryModal}
+                          className={`text-md mb-1 text-left w-full p-1 rounded-md hover:${themeClasses.bgSection} transition-colors duration-200`}
+                        >
+                          <span className={`font-bold ${themeClasses.textPrimary}`}>Avg. Daily Sales Contribution (last 30 days):</span>{' '}
+                          <span className={`${themeClasses.textAccent} text-xl`}>₡{Math.round(avgSalesContributionDisplay).toLocaleString('en-US', {maximumFractionDigits: 0})}</span>
+                        </button>
+                        <p className="text-md mb-1">
+                          <span className={`font-bold ${themeClasses.textPrimary}`}>Est. Days to Target:</span>{' '}
+                          <span className={`${themeClasses.textAccent} text-xl`}>{estimatedDaysState.toLocaleString()}</span> days
+                        </p>
+                        {currentAPYState !== null && (
+                          <p className="text-md">
+                            <span className={`font-bold ${themeClasses.textPrimary}`}>Effective APY:</span>{' '}
+                            <span className={`${themeClasses.textSuccess} text-xl`}>{currentAPYState.toFixed(4)}%</span>
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    <div className="flex justify-center mt-6">
+                        <button
+                            onClick={() => exportSingleGoal(goal)}
+                            className={`px-6 py-3 rounded-full ${themeClasses.bgButtonPrimary} ${themeClasses.hoverBgButtonPrimary} ${themeClasses.textButtonPrimary} font-bold transition duration-300`}
+                        >
+                            Export This Goal
+                        </button>
+                    </div>
+                </div>
+                {/* Tier Progress Box */}
+                <TierProgressBox
+                    currentAmount={parseFloat(currentAmountState)}
+                    targetAmount={originalTargetAmount}
+                    themeClasses={themeClasses}
+                />
+            </div>
+          );
+        };
+
+        // GoalItem Component
+        const GoalItem = ({ goal, themeClasses, deleteGoal, onOpenEditPage }) => {
+          return (
+            <div
+              className={`${themeClasses.bgGoalItem} p-4 rounded-lg shadow-md ${themeClasses.borderGoalItem} border relative cursor-pointer hover:shadow-lg transition-shadow duration-200`}
+              onClick={() => onOpenEditPage(goal)}
+            >
+              <button
+                onClick={(e) => { e.stopPropagation(); deleteGoal(goal.id); }}
+                className={`absolute top-2 right-2 p-1 rounded-full ${themeClasses.textDeleteButton} ${themeClasses.hoverTextDeleteButton} transition-colors duration-200`}
+                aria-label="Delete goal"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm6 0a1 1 0 11-2 0v6a1 1 0 112 0V8z" clipRule="evenodd" />
+                </svg>
+              </button>
+              {goal.name ? (
+                <h3 className={`text-xl font-bold ${themeClasses.textAccent} text-center`}>{goal.name}</h3>
+              ) : (
+                <h3 className={`text-xl font-bold ${themeClasses.textPrimary} text-center`}>Goal #{goal.id.toString().slice(-6)}</h3>
+              )}
+              <p className={`text-sm ${themeClasses.textSecondary} text-center mt-2`}>Click to view/edit details</p>
+            </div>
+          );
+        };
+
+        // BankGoalCalculatorPage Component
+        const BankGoalCalculatorPage = ({
+          themeClasses,
+          currentAmount, setCurrentAmount,
+          targetAmount, setTargetAmount,
+          oneTimeAddAmount, setOneTimeAddAmount,
+          estimatedDays, currentAPY,
+          message, setMessage,
+          calculateDays, addOneTimeAmount, saveNewGoal, clearAll,
+          avgSalesContributionDisplay,
+          goalName, setGoalName,
+          annualInterestRate,
+          compoundingFrequency, setCompoundingFrequency,
+          apyAmountEarned, setApyAmountEarned,
+          onToggleSalesHistoryModal
+        }) => {
+          return (
+            <div className={`${themeClasses.bgContainer} p-6 sm:p-10 rounded-2xl shadow-xl w-full max-w-2xl ${themeClasses.borderContainer} border mt-8 mb-8`}>
+              <h2 className={`text-3xl sm:text-4xl font-bold text-center mb-6 ${themeClasses.textPrimary}`}>
+                New Goal Calculator
+              </h2>
+              <p className={`text-center text-sm mb-6 ${themeClasses.textInput}`}>
+                Calculations consider your daily earnings and a compounding APY that varies with your current bank amount.
+              </p>
+
+              <div className="space-y-4 mb-6">
+                <div>
+                  <label htmlFor="goalName" className={`block ${themeClasses.textPrimary} text-sm font-semibold mb-1`}>
+                    Optional Goal Name
+                  </label>
+                  <input
+                    type="text"
+                    id="goalName"
+                    value={goalName}
+                    onChange={(e) => {setGoalName(e.target.value); setMessage('');}}
+                    placeholder="e.g., New Car Fund"
+                    className={`w-full p-3 rounded-lg ${themeClasses.bgInput} ${themeClasses.borderInput} border ${themeClasses.focusBorderInput} focus:ring ${themeClasses.focusRingInput} focus:ring-opacity-50 ${themeClasses.textInput} ${themeClasses.placeholderInput}`}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="currentAmount" className={`block ${themeClasses.textPrimary} text-sm font-semibold mb-1`}>
+                    Current Bank Amount (coins) <span className="text-xs opacity-70">(Min: ₡5,000)</span>
+                  </label>
+                  <input
+                    type="number"
+                    id="currentAmount"
+                    value={currentAmount}
+                    onChange={(e) => {setCurrentAmount(Math.round(parseFloat(e.target.value || '0')).toString()); setMessage('');}}
+                    placeholder="e.g., 25725924"
+                    step="1"
+                    className={`w-full p-3 rounded-lg ${themeClasses.bgInput} ${themeClasses.borderInput} border ${themeClasses.focusBorderInput} focus:ring ${themeClasses.focusRingInput} focus:ring-opacity-50 ${themeClasses.textInput} ${themeClasses.placeholderInput}`}
+                  />
+                </div>
+                {/* APY Amount Earned display */}
+                <div>
+                  <label className={`block ${themeClasses.textPrimary} text-sm font-semibold mb-1`}>
+                    APY Amount Earned (coins)
+                  </label>
+                  {/* Display boxes use themeClasses.textInput */}
+                  <p className={`w-full p-3 rounded-lg ${themeClasses.bgInput} ${themeClasses.borderInput} border ${themeClasses.textInput}`}>
+                    ₡{Math.round(apyAmountEarned).toLocaleString('en-US', {maximumFractionDigits: 0})}
+                  </p>
+                </div>
+
+                {/* New APY input fields */}
+                <div>
+                  <label htmlFor="annualInterestRate" className={`block ${themeClasses.textPrimary} text-sm font-semibold mb-1`}>
+                    Annual Interest Rate (%)
+                  </label>
+                  <input
+                    type="number"
+                    id="annualInterestRate"
+                    value={annualInterestRate}
+                    readOnly={true} // Made read-only
+                    className={`w-full p-3 rounded-lg ${themeClasses.bgInput} ${themeClasses.borderInput} border ${themeClasses.focusBorderInput} focus:ring ${themeClasses.focusRingInput} focus:ring-opacity-50 ${themeClasses.textInput} ${themeClasses.placeholderInput}`}
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="compoundingFrequency" className={`block ${themeClasses.textPrimary} text-sm font-semibold mb-1`}>
+                    Compounding Frequency (per year)
+                  </label>
+                  <input
+                    type="number"
+                    id="compoundingFrequency"
+                    value={compoundingFrequency}
+                    readOnly={true} // Made read-only
+                    className={`w-full p-3 rounded-lg ${themeClasses.bgInput} ${themeClasses.borderInput} border ${themeClasses.focusBorderInput} focus:ring ${themeClasses.focusRingInput} focus:ring-opacity-50 ${themeClasses.textInput} ${themeClasses.placeholderInput}`}
+                  />
+                </div>
+
+                <div className={`${themeClasses.bgSection} p-4 rounded-lg ${themeClasses.borderSection} border`}>
+                  <label htmlFor="oneTimeAddAmount" className={`block ${themeClasses.textPrimary} text-sm font-semibold mb-2`}>
+                    Add Coins from Sale (one-time)
+                  </label>
+                  <input
+                    type="number"
+                    id="oneTimeAddAmount"
+                    value={oneTimeAddAmount}
+                    onChange={(e) => {setOneTimeAddAmount(Math.round(parseFloat(e.target.value || '0')).toString()); setMessage('');}}
+                    placeholder="e.g., 100000"
+                    step="1"
+                    className={`w-full p-3 rounded-lg ${themeClasses.bgInput} border ${themeClasses.borderInput} ${themeClasses.focusBorderInput} focus:ring ${themeClasses.focusRingInput} focus:ring-opacity-50 ${themeClasses.textInput} ${themeClasses.placeholderInput} mb-3`}
+                  />
+                  <button
+                    onClick={addOneTimeAmount}
+                    className={`w-full ${themeClasses.bgButtonAdd} ${themeClasses.hoverBgButtonAdd} ${themeClasses.textButtonAdd} font-bold py-4 px-6 rounded-full shadow-lg transition-all duration-300 transform hover:-translate-y-1 focus:outline-none focus:ring-4 ${themeClasses.focusRingButtonAdd}`}
+                  >
+                    Add to Current Balance
+                  </button>
+                </div>
+
+                <div>
+                  <label htmlFor="targetAmount" className={`block ${themeClasses.textPrimary} text-sm font-semibold mb-1`}>
+                    Target Bank Amount (coins)
+                  </label>
+                  <input
+                    type="number"
+                    id="targetAmount"
+                    value={targetAmount}
+                    onChange={(e) => {setTargetAmount(Math.round(parseFloat(e.target.value || '0')).toString()); setMessage('');}}
+                    placeholder="e.g., 50000000"
+                    step="1"
+                    className={`w-full p-3 rounded-lg ${themeClasses.bgInput} ${themeClasses.borderInput} border ${themeClasses.focusBorderInput} focus:ring ${themeClasses.focusRingInput} focus:ring-opacity-50 ${themeClasses.textInput} ${themeClasses.placeholderInput}`}
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-3 mb-6">
+                <button
+                  onClick={calculateDays}
+                  className={`flex-1 ${themeClasses.bgButtonPrimary} ${themeClasses.hoverBgButtonPrimary} ${themeClasses.textButtonPrimary} font-bold py-4 px-6 rounded-full shadow-lg transition-all duration-300 transform hover:-translate-y-1 focus:outline-none focus:ring-4 ${themeClasses.focusRingButtonPrimary}`}
+                >
+                  Calculate Days
+                </button>
+                <button
+                  onClick={saveNewGoal}
+                  className={`flex-1 ${themeClasses.bgButtonPrimary} ${themeClasses.hoverBgButtonPrimary} ${themeClasses.textButtonPrimary} font-bold py-4 px-6 rounded-full shadow-lg transition-all duration-300 transform hover:-translate-y-1 focus:outline-none focus:ring-4 ${themeClasses.focusRingButtonPrimary}`}
+                >
+                  Save New Goal
+                </button>
+                <button
+                  onClick={clearAll}
+                  className={`flex-1 ${themeClasses.bgButtonPrimary} ${themeClasses.hoverBgButtonPrimary} ${themeClasses.textButtonPrimary} font-bold py-4 px-6 rounded-full shadow-lg transition-all duration-300 transform hover:-translate-y-1 focus:outline-none focus:ring-4 ${themeClasses.focusRingButtonPrimary}`}
+                >
+                  Clear All
+                </button>
+              </div>
+
+              {message && (
+                <p className={`text-center text-sm mb-4 p-2 rounded-lg ${themeClasses.bgMessage} ${themeClasses.textMessage}`}>
+                  {message}
+                </p>
+              )}
+
+              {estimatedDays !== null && (
+                <div className={`${themeClasses.bgResult} p-5 rounded-lg shadow-inner mb-6 ${themeClasses.borderResult} border`}>
+                  <h2 className={`text-xl font-semibold ${themeClasses.textPrimary} mb-3`}>Calculation Results:</h2>
+                  <button
+                    onClick={onToggleSalesHistoryModal}
+                    className={`text-lg mb-1 text-left w-full p-1 rounded-md hover:${themeClasses.bgSection} transition-colors duration-200`}
+                  >
+                    <span className={`font-bold ${themeClasses.textPrimary}`}>Avg. Daily Sales Contribution (last 30 days):</span>{' '}
+                    <span className={`${themeClasses.textAccent} text-xl`}>₡{Math.round(avgSalesContributionDisplay).toLocaleString('en-US', {maximumFractionDigits: 0})}</span>
+                  </button>
+                  <p className="text-lg mb-2">
+                    <span className={`font-bold ${themeClasses.textPrimary}`}>Estimated Days to Target:</span>{' '}
+                    <span className={`${themeClasses.textAccent} text-2xl`}>{estimatedDays.toLocaleString()}</span> days
+                  </p>
+                  {currentAPY !== null && (
+                    <p className="text-lg mb-2">
+                      <span className={`font-bold ${themeClasses.textPrimary}`}>Current Effective APY:</span>{' '}
+                      <span className={`${themeClasses.textSuccess} text-2xl`}>{currentAPY.toFixed(4)}%</span>
+                      <span className={`text-sm ${themeClasses.textSecondary} block mt-1`}>
+                        (This APY reflects your current earning efficiency with compounding.)
+                      </span>
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        };
+
+        // SavedGoalsPage Component
+        const BankSavedGoalsPage = ({ goals, themeClasses, deleteGoal, onOpenEditPage, onNavigateCalculator, exportAllGoals, importGoals }) => {
+          const fileInputRef = useRef(null);
+
+          const handleImportClick = () => {
+              fileInputRef.current.click();
+          };
+
+          return (
+            <div className={`${themeClasses.bgContainer} p-6 sm:p-10 rounded-2xl shadow-xl w-full max-w-2xl ${themeClasses.borderContainer} border mt-8 mb-8`}>
+              <h2 className={`text-3xl sm:text-4xl font-bold text-center mb-6 ${themeClasses.textPrimary}`}>
+                Your Saved Goals
+              </h2>
+              <div className="flex flex-col sm:flex-row justify-center gap-3 mb-6">
+                <button
+                  onClick={onNavigateCalculator}
+                  className={`px-6 py-4 rounded-full shadow-lg transition-all duration-300 transform hover:-translate-y-1 focus:outline-none focus:ring-4 ${themeClasses.focusRingButtonPrimary} ${themeClasses.bgButtonPrimary} ${themeClasses.textButtonPrimary} font-bold`}
+                >
+                  New Goal Calculator
+                </button>
+                <button
+                  onClick={exportAllGoals}
+                  className={`px-6 py-4 rounded-full shadow-lg transition-all duration-300 transform hover:-translate-y-1 focus:outline-none focus:ring-4 ${themeClasses.focusRingButtonPrimary} ${themeClasses.bgButtonPrimary} ${themeClasses.hoverBgButtonPrimary} ${themeClasses.textButtonPrimary} font-bold`}
+                >
+                  Export All Goals
+                </button>
+                <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={importGoals}
+                    accept=".json"
+                    className="hidden"
+                />
+                <button
+                  onClick={handleImportClick}
+                  className={`px-6 py-4 rounded-full shadow-lg transition-all duration-300 transform hover:-translate-y-1 focus:outline-none focus:ring-4 ${themeClasses.focusRingButtonPrimary} ${themeClasses.bgButtonPrimary} ${themeClasses.hoverBgButtonPrimary} ${themeClasses.textButtonPrimary} font-bold`}
+                >
+                  Import Goals
+                </button>
+              </div>
+
+              {goals.length === 0 ? (
+                <p className={`text-center ${themeClasses.textInput} text-lg py-10`}>No goals saved yet. Go back to the calculator to add one!</p>
+              ) : (
+                <div className="space-y-4 max-h-96 overflow-y-auto pr-2">
+                  {goals.map((goal) => (
+                    <GoalItem
+                      key={goal.id}
+                      goal={goal}
+                      themeClasses={themeClasses}
+                      deleteGoal={deleteGoal}
+                      onOpenEditPage={onOpenEditPage}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        };
+
+        {/* Generic Confirmation Modal */}
+        const ConfirmDeleteModal = ({ isOpen, onClose, onConfirm, message, themeClasses }) => {
+          if (!isOpen) return null;
+
+          return (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+              <div className={`${themeClasses.bgContainer} p-6 rounded-lg shadow-xl max-w-sm w-full relative ${themeClasses.borderContainer} border`}>
+                <h3 className={`text-xl font-bold mb-4 ${themeClasses.textPrimary}`}>Confirm Deletion</h3>
+                <p className={`${themeClasses.textSecondary} mb-6`}>{message}</p>
+                <div className="flex justify-end gap-3">
+                  <button
+                    onClick={onClose}
+                    className={`px-4 py-2 rounded-lg ${themeClasses.bgButtonAdd} ${themeClasses.hoverBgButtonAdd} ${themeClasses.textButtonAdd} font-bold transition duration-300`}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={onConfirm}
+                    className={`px-4 py-2 rounded-lg bg-red-500 hover:bg-red-700 text-white font-bold transition duration-300`}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        // New ImportOptionsModal Component
+        const ImportOptionsModal = ({ isOpen, onClose, fileType, onSelectOption, themeClasses }) => {
+            if (!isOpen) return null;
+
+            const handleOptionClick = (option) => {
+                onSelectOption(option);
+                onClose();
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+                    <div className={`${themeClasses.bgContainer} p-6 rounded-2xl shadow-xl max-w-md w-full relative ${themeClasses.borderContainer} border`}>
+                        <h3 className={`text-2xl font-bold mb-4 ${themeClasses.textPrimary} text-center`}>Import Options</h3>
+                        <p className={`${themeClasses.textSecondary} text-center mb-6`}>
+                            A {fileType === "MP" ? "multi-goal" : "single-goal"} file was detected. Please choose how to import:
+                        </p>
+
+                        <div className="flex flex-col gap-4">
+                            {fileType === "MP" && (
+                                <>
+                                    <button
+                                        onClick={() => handleOptionClick('replace')}
+                                        className={`w-full px-6 py-3 rounded-full ${themeClasses.bgButtonPrimary} ${themeClasses.hoverBgButtonPrimary} ${themeClasses.textButtonPrimary} font-bold transition duration-300`}
+                                    >
+                                        Replace All Existing Goals
+                                    </button>
+                                    <button
+                                        onClick={() => handleOptionClick('merge')}
+                                        className={`w-full px-6 py-3 rounded-full ${themeClasses.bgButtonPrimary} ${themeClasses.hoverBgButtonPrimary} ${themeClasses.textButtonPrimary} font-bold transition duration-300`}
+                                    >
+                                        Merge with Existing Goals
+                                    </button>
+                                </>
+                            )}
+                            {fileType === "SP" && (
+                                <>
+                                    <button
+                                        onClick={() => handleOptionClick('addNew')}
+                                        className={`w-full px-6 py-3 rounded-full ${themeClasses.bgButtonPrimary} ${themeClasses.hoverBgButtonPrimary} ${themeClasses.textButtonPrimary} font-bold transition duration-300`}
+                                    >
+                                        Add as a New Goal
+                                    </button>
+                                    <button
+                                        onClick={() => handleOptionClick('updateOrAdd')}
+                                        className={`w-full px-6 py-3 rounded-full ${themeClasses.bgButtonPrimary} ${themeClasses.hoverBgButtonPrimary} ${themeClasses.textButtonPrimary} font-bold transition duration-300`}
+                                    >
+                                        Update Existing Goal (by ID) or Add New
+                                    </button>
+                                </>
+                            )}
+                            <button
+                                onClick={onClose}
+                                className={`w-full px-6 py-3 rounded-full ${themeClasses.bgButtonAdd} ${themeClasses.hoverBgButtonAdd} ${themeClasses.textButtonAdd} font-bold transition duration-300 mt-4`}
+                            >
+                                Cancel Import
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+
+        {/* Component for the Bank Goal Tracker content */}
+        const BankGoalTrackerContent = ({ themeClasses }) => {
+          const [currentBankSubPage, setCurrentBankSubPage] = useState('calculator');
+          const [selectedGoal, setSelectedGoal] = useState(null);
+          const [showSalesHistoryModal, setShowSalesHistoryModal] = useState(false); // New state for modal
+
+          const [goalName, setGoalName] = useState('');
+          const [currentAmount, setCurrentAmount] = useState('');
+          const [annualInterestRate] = useState('10'); // Fixed to 10%
+          const [compoundingFrequency, setCompoundingFrequency] = useState('365'); // Default to 365
+          const [apyAmountEarned, setApyAmountEarned] = useState(0); // State for APY Amount Earned
+          const [targetAmount, setTargetAmount] = useState('');
+          const [oneTimeAddAmount, setOneTimeAddAmount] = useState('');
+          const [estimatedDays, setEstimatedDays] = useState(null);
+          const [dailyEarningRate, setDailyEarningRate] = useState(null);
+          const [currentAPY, setCurrentAPY] = useState(null);
+          const [message, setMessage] = useState('');
+
+          const [goals, setGoals] = useState([]);
+          const [salesDepositHistory, setSalesDepositHistory] = useState([]);
+
+          // State for import modal
+          const [showImportOptionsModal, setShowImportOptionsModal] = useState(false);
+          const [importFileData, setImportFileData] = useState(null);
+          const [importFileType, setImportFileType] = useState(null);
+
+
+          {/* Load data from local storage on initial render */}
+          useEffect(() => {
+            try {
+              const storedGoals = JSON.parse(localStorage.getItem('bankGoals')) || [];
+              setGoals(storedGoals);
+
+              const storedSalesHistory = JSON.parse(localStorage.getItem('salesDepositHistory')) || [];
+              setSalesDepositHistory(storedSalesHistory);
+            } catch (error) {
+              console.error("Failed to load data from local storage:", error);
+              setMessage("Error loading saved data. Local storage might be corrupted.");
+            }
+          }, []);
+
+          {/* Save goals to local storage whenever they change */}
+          useEffect(() => {
+            try {
+              localStorage.setItem('bankGoals', JSON.stringify(goals));
+            } catch (error) {
+              console.error("Failed to save goals to local storage:", error);
+              setMessage("Error saving goals. Local storage might be full.");
+            }
+          }, [goals]);
+
+          {/* Save salesDepositHistory to local storage whenever it changes */}
+          useEffect(() => {
+            try {
+              localStorage.setItem('salesDepositHistory', JSON.stringify(salesDepositHistory));
+            } catch (error) {
+              console.error("Failed to save sales history to local storage:", error);
+              setMessage("Error saving sales history. Local storage might be full.");
+            }
+          }, [salesDepositHistory]);
+
+
+          const getAverageDailySalesContribution = (history, daysWindow = 30) => {
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+
+              const startDate = new Date(today);
+              startDate.setDate(today.getDate() - daysWindow);
+
+              const recentSales = history.filter(deposit => {
+                  const depositDate = new Date(deposit.date);
+                  depositDate.setHours(0, 0, 0, 0);
+                  return depositDate >= startDate && depositDate <= today; // Corrected comparison
+              });
+
+              if (recentSales.length === 0) {
+                  return 0;
+              }
+
+              const totalAmount = recentSales.reduce((sum, deposit) => sum + Math.round(deposit.amount), 0); // Ensure rounding
+              return Math.round(totalAmount / daysWindow); // Round average to whole coin
+          };
+
+          const updateSalesDepositHistory = (date, amount) => {
+              const thirtyDaysAgo = new Date();
+              thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+              // Filter out old entries and add new one, ensuring amounts are whole numbers
+              const filteredHistory = salesDepositHistory.filter(deposit => new Date(deposit.date) >= thirtyDaysAgo);
+              const newHistory = [...filteredHistory, { date: date, amount: Math.round(amount) }]; // Ensure amount is whole
+
+              setSalesDepositHistory(newHistory);
+              setMessage("Sales history updated.");
+          };
+
+
+          const calculateDays = () => {
+            setMessage('');
+
+            const current = Math.round(parseFloat(currentAmount || '0')); // Ensure current is whole
+            const target = Math.round(parseFloat(targetAmount || '0')); // Ensure target is whole
+            const avgSalesContribution = getAverageDailySalesContribution(salesDepositHistory);
+
+            if (isNaN(current) || isNaN(target) || current <= 0 || target <= 0) {
+              setMessage('Please enter valid positive numbers for Current Amount and Target Amount.');
+              setEstimatedDays(null);
+              setDailyEarningRate(null);
+              setCurrentAPY(null);
+              setApyAmountEarned(0); // Reset APY Amount Earned
+              return;
+            }
+
+            if (target <= current) {
+              setMessage('Target must be greater than current amount.');
+              setEstimatedDays(0);
+              setDailyEarningRate(null);
+              setCurrentAPY(null);
+              setApyAmountEarned(0); // Reset APY Amount Earned
+              return;
+            }
+
+            const parsedR = parseFloat(annualInterestRate); // Use fixed R
+            const parsedN = parseInt(compoundingFrequency);
+
+            if (isNaN(parsedR) || parsedR < 0 || isNaN(parsedN) || parsedN <= 0) {
+                setMessage('Please ensure Compounding Frequency is a valid positive number.');
+                setEstimatedDays(null);
+                setDailyEarningRate(null);
+                setCurrentAPY(null);
+                setApyAmountEarned(0); // Reset APY Amount Earned
+                return;
+            }
+
+            const r = parsedR / 100;
+            const N = parsedN;
+
+            // Daily earnings are now always calculated from APY
+            const dailyEarningsToUse = Math.round(current * (r / 365)); // Rounded to whole coin
+            setApyAmountEarned(dailyEarningsToUse); // Update APY Amount Earned display
+
+            // Total daily growth combines daily earnings (from APY) with sales contribution
+            const totalDailyGrowth = dailyEarningsToUse + avgSalesContribution;
+
+            if (totalDailyGrowth <= 0) {
+                setMessage('Total daily growth must be positive to reach the target.');
+                setEstimatedDays(null);
+                setCurrentAPY(null);
+                return;
+            }
+
+            // Calculate the overall daily growth rate
+            const rate = totalDailyGrowth / current;
+            setDailyEarningRate(rate); // This rate now reflects combined growth
+
+            // Calculate the effective annual percentage yield based on this combined daily rate
+            const effectiveAPY = (Math.pow((1 + rate), 365) - 1) * 100;
+            setCurrentAPY(effectiveAPY);
+
+            // Calculate days to target using the combined daily growth rate
+            const days = Math.log(target / current) / Math.log(1 + rate);
+
+            setEstimatedDays(Math.ceil(days));
+            setMessage('Calculation successful!');
+          };
+
+          const addOneTimeAmount = () => { // Removed async as local storage is synchronous
+            setMessage('');
+            const amountToAdd = Math.round(parseFloat(oneTimeAddAmount || '0')); // Round to whole coin
+
+            if (isNaN(amountToAdd) || amountToAdd <= 0) {
+              setMessage('Please enter a valid positive amount to add.');
+              return;
+            }
+            if (isNaN(Math.round(parseFloat(currentAmount || '0')))) { // Ensure currentAmount is whole
+                setMessage('Please enter your current bank amount first.');
+                return;
+            }
+
+            const newCurrentAmount = Math.round(parseFloat(currentAmount || '0') + amountToAdd); // Round to whole coin
+            setCurrentAmount(newCurrentAmount.toString());
+            setOneTimeAddAmount('');
+            setCompoundingFrequency('365'); // Set compounding frequency to 365 on adding coins
+
+            // Recalculate APY Amount Earned immediately after updating currentAmount
+            const r = parseFloat(annualInterestRate) / 100;
+            const calculatedApyEarned = Math.round(newCurrentAmount * (r / 365)); // Rounded to whole coin
+            setApyAmountEarned(calculatedApyEarned);
+
+            const todayDate = new Date().toISOString().split('T')[0];
+            updateSalesDepositHistory(todayDate, amountToAdd); // No await needed for local storage
+
+            // Recalculate days after adding one-time amount
+            setTimeout(calculateDays, 50);
+          };
+
+          const saveNewGoal = () => { // Removed async as local storage is synchronous
+            if (estimatedDays === null) {
+              setMessage('Please calculate the days first before saving a goal.');
+              return;
+            }
+
+            try {
+              const currentParsed = Math.round(parseFloat(currentAmount));
+              const rParsed = parseFloat(annualInterestRate);
+              const nParsed = parseInt(compoundingFrequency);
+
+              let dailyEarningsToSave = 0;
+              if (!isNaN(currentParsed) && currentParsed > 0 && !isNaN(rParsed) && rParsed >= 0 && !isNaN(nParsed) && nParsed > 0) {
+                  dailyEarningsToSave = Math.round(currentParsed * (rParsed / 100 / 365));
+              }
+
+              const newGoal = {
+                id: Date.now(), // Generate a unique ID for local storage
+                name: goalName.trim() === '' ? null : goalName.trim(),
+                currentAmount: currentParsed, // Save as whole coin
+                currentDailyEarnings: dailyEarningsToSave, // Save the determined daily earnings
+                annualInterestRate: parseFloat(annualInterestRate), // Save R
+                compoundingFrequency: parseInt(compoundingFrequency), // Save N
+                targetAmount: Math.round(parseFloat(targetAmount)), // Save as whole coin
+                estimatedDays: estimatedDays,
+                dailyEarningRate: dailyEarningRate,
+                currentAPY: currentAPY, // Save the calculated effective APY
+                dateAdded: new Date().toLocaleDateString(),
+                timeAdded: new Date().toLocaleTimeString(),
+              };
+              setGoals([...goals, newGoal]);
+
+              setMessage('New goal saved successfully!');
+              clearAll();
+              setGoalName('');
+            } catch (error) {
+              console.error("Error saving new goal to local storage:", error);
+              setMessage(`Error saving new goal: ${error.message}`);
+            }
+          };
+
+          const clearAll = () => {
+            setGoalName('');
+            setCurrentAmount('');
+            setApyAmountEarned(0); // Reset APY Amount Earned
+            setCompoundingFrequency('365'); // Reset to default 365
+            setTargetAmount('');
+            setOneTimeAddAmount('');
+            setEstimatedDays(null);
+            setDailyEarningRate(null);
+            setCurrentAPY(null);
+            setMessage('');
+          };
+
+          const deleteGoal = (id) => { // Removed async
+            try {
+              setGoals(goals.filter(goal => goal.id !== id));
+              setMessage('Goal deleted.');
+            } catch (error) {
+              console.error("Error deleting goal from local storage:", error);
+              setMessage(`Error deleting goal: ${error.message}`);
+            }
+          };
+
+          const updateGoal = (updatedGoal) => { // Removed async
+            try {
+              setGoals(goals.map(goal => goal.id === updatedGoal.id ? updatedGoal : goal));
+              setMessage('Goal updated successfully!');
+            } catch (error) {
+              console.error("Error updating goal in local storage:", error);
+              setMessage(`Error updating goal: ${error.message}`);
+            }
+          };
+
+          const handleOpenEditPage = (goal) => {
+            setSelectedGoal(goal);
+            setCurrentBankSubPage('goalEdit');
+          };
+
+          const handleBackToSavedGoals = () => {
+            setCurrentBankSubPage('savedGoals');
+            setSelectedGoal(null);
+          };
+
+          const toggleSalesHistoryModal = () => {
+            setShowSalesHistoryModal(prev => !prev);
+          };
+
+          const avgSalesContributionDisplay = getAverageDailySalesContribution(salesDepositHistory);
+
+          // Export Functions
+          const exportData = (data, filename, type) => {
+              const jsonString = JSON.stringify(data, null, 2);
+              const blob = new Blob([jsonString], { type: 'application/json' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = filename;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+              setMessage(`Successfully exported ${type}.`);
+          };
+
+          const exportAllGoals = () => {
+              const timestamp = new Date().toISOString().replace(/[:.-]/g, '');
+              const filename = `bank_goals_multi_export_${timestamp}.json`;
+              exportData({ type: "MP", goals: goals }, filename, "all goals");
+          };
+
+          const exportSingleGoal = (goalToExport) => {
+              const timestamp = new Date().toISOString().replace(/[:.-]/g, '');
+              const goalNameForFilename = goalToExport.name ? goalToExport.name.replace(/[^a-zA-Z0-9]/g, '_') : goalToExport.id;
+              const filename = `bank_goal_single_export_${goalNameForFilename}_${timestamp}.json`;
+              exportData({ type: "SP", goal: goalToExport }, filename, "single goal");
+          };
+
+          // Import Functions
+          const importGoals = (event) => {
+              const file = event.target.files[0];
+              if (!file) {
+                  setMessage('No file selected.');
+                  return;
+              }
+
+              const reader = new FileReader();
+              reader.onload = (e) => {
+                  try {
+                      const importedData = JSON.parse(e.target.result);
+
+                      if (importedData.type === "MP" && Array.isArray(importedData.goals)) {
+                          setImportFileData(importedData.goals);
+                          setImportFileType("MP");
+                          setShowImportOptionsModal(true);
+                      } else if (importedData.type === "SP" && typeof importedData.goal === 'object' && importedData.goal !== null) {
+                          setImportFileData(importedData.goal);
+                          setImportFileType("SP");
+                          setShowImportOptionsModal(true);
+                      } else {
+                          setMessage('Invalid file format. Please select a valid Bank Goal Tracker JSON file.');
+                      }
+                  } catch (error) {
+                      console.error("Error parsing imported file:", error);
+                      setMessage('Error reading file. Please ensure it is a valid JSON file.');
+                  }
+              };
+              reader.readAsText(file);
+              // Clear the input value so the same file can be selected again
+              event.target.value = '';
+          };
+
+          const handleImportOptionSelected = (option) => {
+              if (importFileType === "MP") {
+                  if (option === 'replace') {
+                      setGoals(importFileData);
+                      setMessage('All goals replaced successfully!');
+                  } else if (option === 'merge') {
+                      const newGoals = [...goals];
+                      importFileData.forEach(importedGoal => {
+                          const existingIndex = newGoals.findIndex(g => g.id === importedGoal.id);
+                          if (existingIndex !== -1) {
+                              newGoals[existingIndex] = importedGoal; // Update existing
+                          } else {
+                              newGoals.push(importedGoal); // Add new
+                          }
+                      });
+                      setGoals(newGoals);
+                      setMessage('Goals merged successfully!');
+                  }
+              } else if (importFileType === "SP") {
+                  if (option === 'addNew') {
+                      const newGoalWithNewId = { ...importFileData, id: Date.now() }; // Assign new ID
+                      setGoals([...goals, newGoalWithNewId]);
+                      setMessage('Single goal added as new successfully!');
+                  } else if (option === 'updateOrAdd') {
+                      const newGoals = [...goals];
+                      const importedGoal = importFileData;
+                      const existingIndex = newGoals.findIndex(g => g.id === importedGoal.id);
+                      if (existingIndex !== -1) {
+                          newGoals[existingIndex] = importedGoal; // Update existing
+                          setMessage('Single goal updated successfully!');
+                      } else {
+                          newGoals.push(importedGoal); // Add new with original ID
+                          setMessage('Single goal added as new (no matching ID found)!');
+                      }
+                      setGoals(newGoals);
+                  }
+              }
+              setImportFileData(null);
+              setImportFileType(null);
+              setShowImportOptionsModal(false);
+          };
+
+
+          return (
+            <div className={`w-full flex flex-col items-center`}>
+              <div className={`w-full ${themeClasses.bgSection} p-2 rounded-lg shadow-inner mb-6 flex justify-center gap-2 border ${themeClasses.borderSection}`}>
+                <button
+                  onClick={() => setCurrentBankSubPage('calculator')}
+                  className={`px-4 py-2 rounded-lg font-bold transition duration-300 ease-in-out
+                    ${currentBankSubPage === 'calculator' ? `${themeClasses.bgButtonPrimary} ${themeClasses.textButtonPrimary}` : `${getContrastTextColor(getHexFromTailwindClass(themeClasses.bgSubNavInactive), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text'])} hover:${themeClasses.bgButtonAdd} hover:${themeClasses.textButtonAdd}`}
+                  `}
+                >
+                  New Goal Calculator
+                </button>
+                <button
+                  onClick={() => setCurrentBankSubPage('savedGoals')}
+                  className={`px-4 py-2 rounded-lg font-bold transition duration-300 ease-in-out
+                    ${currentBankSubPage === 'savedGoals' ? `${themeClasses.bgButtonPrimary} ${themeClasses.textButtonPrimary}` : `${getContrastTextColor(getHexFromTailwindClass(themeClasses.bgSubNavInactive), tailwindColorsHex['light-global-text'], tailwindColorsHex['dark-global-text'])} hover:${themeClasses.bgButtonAdd} hover:${themeClasses.textButtonAdd}`}
+                  `}
+                >
+                  Your Saved Goals
+                </button>
+              </div>
+
+              {currentBankSubPage === 'calculator' && (
+                <>
+                    <BankGoalCalculatorPage
+                      themeClasses={themeClasses}
+                      goalName={goalName} setGoalName={setGoalName}
+                      currentAmount={currentAmount} setCurrentAmount={setCurrentAmount}
+                      annualInterestRate={annualInterestRate}
+                      compoundingFrequency={compoundingFrequency} setCompoundingFrequency={setCompoundingFrequency}
+                      apyAmountEarned={apyAmountEarned} setApyAmountEarned={setApyAmountEarned}
+                      targetAmount={targetAmount} setTargetAmount={setTargetAmount}
+                      oneTimeAddAmount={oneTimeAddAmount} setOneTimeAddAmount={setOneTimeAddAmount}
+                      estimatedDays={estimatedDays} currentAPY={currentAPY}
+                      message={message} setMessage={setMessage}
+                      calculateDays={calculateDays} addOneTimeAmount={addOneTimeAmount} saveNewGoal={saveNewGoal} clearAll={clearAll}
+                      avgSalesContributionDisplay={avgSalesContributionDisplay}
+                      onToggleSalesHistoryModal={toggleSalesHistoryModal}
+                    />
+                </>
+              )}
+              {currentBankSubPage === 'savedGoals' && (
+                <BankSavedGoalsPage
+                  goals={goals}
+                  themeClasses={themeClasses}
+                  deleteGoal={deleteGoal}
+                  onOpenEditPage={handleOpenEditPage}
+                  onNavigateCalculator={() => setCurrentBankSubPage('calculator')}
+                  exportAllGoals={exportAllGoals}
+                  importGoals={importGoals}
+                />
+              )}
+              {currentBankSubPage === 'goalEdit' && selectedGoal && (
+                <GoalEditPage
+                  goal={selectedGoal}
+                  themeClasses={themeClasses}
+                  updateGoal={updateGoal}
+                  onBack={handleBackToSavedGoals}
+                  salesDepositHistory={salesDepositHistory}
+                  updateSalesDepositHistory={updateSalesDepositHistory}
+                  onToggleSalesHistoryModal={toggleSalesHistoryModal}
+                  exportSingleGoal={exportSingleGoal}
+                />
+              )}
+
+              <DailySalesHistorySheet
+                isOpen={showSalesHistoryModal}
+                onClose={toggleSalesHistoryModal}
+                history={salesDepositHistory}
+                themeClasses={themeClasses}
+              />
+
+              <ImportOptionsModal
+                  isOpen={showImportOptionsModal}
+                  onClose={() => setShowImportOptionsModal(false)}
+                  fileType={importFileType}
+                  onSelectOption={handleImportOptionSelected}
+                  themeClasses={themeClasses}
+              />
+            </div>
+          );
+        };
+
+        {/* Main App component for the standalone Bank Goal Tracker */}
+        const App = () => {
+          const [currentTheme, setCurrentTheme] = useState('Pink Dayz'); {/* Default theme changed to Pink Dayz */}
+          const [showThemesMenu, setShowThemesMenu] = useState(false);
+          // No Firebase states needed for local storage version
+          const userId = "local-user"; // A dummy user ID for local storage, not used for auth
+
+          {/* Load theme from local storage on initial render */}
+          useEffect(() => {
+            try {
+              const storedTheme = localStorage.getItem('gameBankTrackerTheme');
+              if (storedTheme && themes[storedTheme]) {
+                setCurrentTheme(storedTheme);
+              }
+            } catch (error) {
+              console.error("Failed to load theme from local storage:", error);
+            }
+          }, []);
+
+          {/* Save theme to local storage whenever it changes */}
+          useEffect(() => {
+            try {
+              localStorage.setItem('gameBankTrackerTheme', currentTheme);
+            } catch (error) {
+              console.error("Failed to save theme to local storage:", error);
+            }
+          }, [currentTheme]);
+
+          const themeClasses = themes[currentTheme];
+
+          return (
+            <div className={`min-h-screen ${themeClasses.bgScreen} flex flex-col items-center p-4 font-inter`}>
+              {/* Header for the standalone app */}
+              <div className={`w-full ${themeClasses.bgButtonPrimary} p-4 shadow-lg fixed top-0 left-0 right-0 z-10 flex flex-col items-center justify-center`}>
+                <div className="flex items-center justify-center w-full relative mb-2">
+                  <h1 className={`text-xl sm:text-2xl md:text-3xl lg:text-4xl font-extrabold tracking-tight text-center ${themeClasses.bannerText}`}>
+                    Bank Goal Tracker
+                  </h1>
+                  {/* Theme Button */}
+                  <div className="absolute top-0 right-4 z-20">
+                    <button
+                      onClick={() => setShowThemesMenu(!showThemesMenu)}
+                      className={`w-10 h-10 rounded-full shadow-lg flex items-center justify-center transition-colors duration-200
+                        ${themeClasses.bgButtonPrimary.replace('bg-[', 'bg-').replace(']', '')}
+                        ${themeClasses.borderContainer.replace('border-[', 'border-').replace(']', '')}
+                        ${themeClasses.textButtonPrimary}
+                      `}
+                      aria-label="Change theme"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+                        <path fillRule="evenodd" d="M10.788 3.21c.448-1.077 1.976-1.077 2.424 0l2.082 5.006 5.404.434c1.164.093 1.636 1.545.749 2.305l-4.117 3.527 1.257 5.273c.271 1.136-.964 2.033-1.96 1.425L12 18.354 7.373 21.18c-1.002.607-2.29-.207-1.96-1.425l1.257-5.273-4.117-3.527c-.887-.76-.415-2.212.749-2.305l5.404-.434 2.082-5.006z" clipRule="evenodd" />
+                    </svg>
+                    </button>
+
+                    {showThemesMenu && (
+                      <div className={`absolute mt-2 right-0 w-40 rounded-lg shadow-lg ${themeClasses.bgContainer} ${themeClasses.borderContainer} border py-1`}>
+                        {Object.entries(themes).map(([key, theme]) => (
+                          <button
+                            key={key}
+                            onClick={() => {
+                              setCurrentTheme(key);
+                              setShowThemesMenu(false);
+                            }}
+                            className={`block w-full text-left px-4 py-2 text-sm ${themeClasses.textPrimary} hover:${themeClasses.bgSection} rounded-md`}
+                          >
+                            {theme.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {/* User ID display is removed as it's not relevant for local storage */}
+              </div>
+
+              {/* Main content area, pushed down by the fixed header */}
+              <div className="flex flex-grow items-center justify-center mt-28 w-full">
+                <BankGoalTrackerContent
+                    themeClasses={themeClasses}
+                    // No Firebase props needed for local storage version
+                />
+              </div>
+            </div>
+          );
+        };
+
+        // Use window.onload to ensure ReactDOM is available
+        window.onload = function() {
+            const root = ReactDOM.createRoot(document.getElementById('root'));
+            root.render(<App />);
+        };
+    </script>
+</body>
+</html>
